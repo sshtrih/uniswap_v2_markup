@@ -5,7 +5,7 @@ from typing import List, Dict
 from web3 import Web3
 from tqdm import tqdm
 
-from decoder import get_paircreated_event_signature, decode_paircreated_event
+from src.decoders.event_decoder import get_paircreated_event_signature, decode_paircreated_event
 
 
 def fetch_logs_in_batches(

@@ -1,37 +1,35 @@
-"""Main entry point for the Uniswap V2 indexer."""
+"""Main entry point for the Uniswap V2 indexer CLI."""
 
-from config import load_config
-from rpc import get_web3
-from factory_indexer import index_pairs
-from storage import save_pairs_to_csv
+import sys
 
 
 def main():
-    """Main function to run the Uniswap V2 pair indexing process."""
-    print("=== Uniswap V2 Pair Indexer ===\n")
+    """Main CLI dispatcher for commands."""
+    # Get command from arguments, default to 'index-pairs'
+    command = sys.argv[1] if len(sys.argv) > 1 else 'index-pairs'
     
-    # Load configuration
-    print("Loading configuration...")
-    config = load_config()
-    print(f"Factory Address: {config['FACTORY_ADDRESS']}")
-    print(f"Block Range: {config['START_BLOCK']} to {config['START_BLOCK'] + config['BLOCK_RANGE'] - 1}")
-    print(f"Batch Size: {config['BATCH_SIZE']}\n")
-    
-    # Connect to RPC
-    print(f"Connecting to RPC: {config['RPC_URL']}")
-    w3 = get_web3(config['RPC_URL'])
-    print("Successfully connected to RPC\n")
-    
-    # Index pairs
-    pairs = index_pairs(w3, config)
-    
-    # Save to CSV
-    if pairs:
-        output_filename = 'uniswap_v2_pairs.csv'
-        save_pairs_to_csv(pairs, output_filename)
-        print(f"\nIndexing complete! Found {len(pairs)} pairs")
+    if command == 'index-pairs':
+        from src.commands.index_pairs import run
+        run()
+    elif command == 'help' or command == '--help' or command == '-h':
+        print_help()
     else:
-        print("\nNo pairs found in the specified block range")
+        print(f"Unknown command: {command}")
+        print("Run 'python -m src.main help' for available commands")
+        sys.exit(1)
+
+
+def print_help():
+    """Print available commands."""
+    print("=== Uniswap V2 Indexer CLI ===\n")
+    print("Available commands:")
+    print("  index-pairs    Index Uniswap V2 pairs from Factory contract (default)")
+    print("  help           Show this help message")
+    print("\nUsage:")
+    print("  python -m src.main [command]")
+    print("\nExamples:")
+    print("  python -m src.main")
+    print("  python -m src.main index-pairs")
 
 
 if __name__ == "__main__":
