@@ -16,6 +16,35 @@ from src.decoders.event_decoder import (
 )
 
 
+def _tx_hash_hex(tx_hash) -> str:
+    """Normalize transaction hash to hex string."""
+    if isinstance(tx_hash, bytes):
+        return tx_hash.hex()
+    return tx_hash
+
+
+def get_transaction_sender(w3: Web3, tx_hash: str, cache: dict) -> str:
+    """
+    Get transaction sender (from address) with caching.
+
+    Args:
+        w3: Connected Web3 instance
+        tx_hash: Transaction hash (hex string)
+        cache: Dictionary to cache transaction senders
+
+    Returns:
+        str: Checksummed address of transaction sender (empty string on error)
+    """
+    if tx_hash not in cache:
+        try:
+            tx = w3.eth.get_transaction(tx_hash)
+            cache[tx_hash] = Web3.to_checksum_address(tx['from'])
+        except Exception as e:
+            print(f"Error fetching transaction {tx_hash}: {e}")
+            cache[tx_hash] = ''
+    return cache[tx_hash]
+
+
 def load_pair_addresses(csv_path: str) -> List[str]:
     """
     Load pair addresses from CSV file.
@@ -148,9 +177,17 @@ def index_pair_events(
         return []
 
     events = []
+    tx_sender_cache = {}  # Cache for transaction senders (one tx can have multiple events)
+
+    print("Decoding events and fetching transaction senders...")
     for log in tqdm(logs, desc="Decoding events", unit="event"):
         try:
-            events.append(decode_pair_event(log))
+            event = decode_pair_event(log)
+            # Add transaction sender (tx_from) - the address that initiated the transaction
+            tx_hash = _tx_hash_hex(log['transactionHash'])
+            tx_from = get_transaction_sender(w3, tx_hash, tx_sender_cache)
+            event['tx_from'] = tx_from
+            events.append(event)
         except Exception as e:
             print(f"\nError decoding event in tx {log.get('transactionHash', 'unknown')}: {e}")
 

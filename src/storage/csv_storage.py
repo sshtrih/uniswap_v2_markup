@@ -54,7 +54,7 @@ def save_pair_events_to_csv(events: List[dict], filename: str) -> None:
     Args:
         events: List of event dicts with at least:
             - event_type: 'swap' | 'mint' | 'burn'
-            - pair_address, sender, block_number, transaction_hash, log_index
+            - pair_address, sender, tx_from, block_number, transaction_hash, log_index
             - swap: amount0In, amount1In, amount0Out, amount1Out, to
             - mint/burn: amount0, amount1; burn also has to
         filename: Output CSV filename (will be saved in data/ directory)
@@ -68,7 +68,7 @@ def save_pair_events_to_csv(events: List[dict], filename: str) -> None:
     filepath = os.path.join(data_dir, filename)
 
     columns = [
-        'event_type', 'pair_address', 'sender',
+        'event_type', 'pair_address', 'sender', 'tx_from',
         'amount0', 'amount1', 'amount0In', 'amount1In', 'amount0Out', 'amount1Out',
         'to', 'block_number', 'transaction_hash', 'log_index'
     ]
