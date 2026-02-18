@@ -1,9 +1,9 @@
 """Command to index Uniswap V2 pairs from Factory contract."""
 
-from src.core.config import load_config
-from src.core.rpc import get_web3
-from src.indexers.factory_indexer import index_pairs
-from src.storage.csv_storage import save_pairs_to_csv
+from src.protocols.uniswap_v2.core.config import load_config
+from src.protocols.uniswap_v2.core.rpc import get_web3
+from src.protocols.uniswap_v2.indexers.factory_indexer import index_pairs
+from src.protocols.uniswap_v2.storage.csv_storage import save_pairs_to_csv
 
 
 def run():

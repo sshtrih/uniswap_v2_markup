@@ -8,7 +8,7 @@ import pandas as pd
 from web3 import Web3
 from tqdm import tqdm
 
-from src.decoders.event_decoder import (
+from src.protocols.uniswap_v2.decoders.event_decoder import (
     get_swap_event_signature,
     get_mint_event_signature,
     get_burn_event_signature,
@@ -147,7 +147,7 @@ def fetch_pair_logs_in_batches(
 def index_pair_events(
     w3: Web3,
     config: dict,
-    csv_path: str = 'data/uniswap_v2_pairs.csv',
+    csv_path: str = 'data/uniswap_v2/uniswap_v2_pairs.csv',
 ) -> List[dict]:
     """
     Main indexing function: load pair addresses, fetch logs in batches, decode all events.

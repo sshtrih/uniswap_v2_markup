@@ -25,7 +25,7 @@ def save_pairs_to_csv(pairs: List[dict], filename: str) -> None:
         return
     
     # Ensure data directory exists
-    data_dir = 'data'
+    data_dir = 'data/uniswap_v2'
     os.makedirs(data_dir, exist_ok=True)
     
     # Create full path
@@ -63,7 +63,7 @@ def save_pair_events_to_csv(events: List[dict], filename: str) -> None:
         print("No pair events to save")
         return
 
-    data_dir = 'data'
+    data_dir = 'data/uniswap_v2'
     os.makedirs(data_dir, exist_ok=True)
     filepath = os.path.join(data_dir, filename)
 

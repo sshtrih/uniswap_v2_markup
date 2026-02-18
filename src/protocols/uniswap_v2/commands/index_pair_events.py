@@ -1,9 +1,9 @@
 """Command to index Uniswap V2 Pair events (Swap, Mint, Burn) from pairs CSV."""
 
-from src.core.config import load_config
-from src.core.rpc import get_web3
-from src.indexers.pairs_indexer import index_pair_events
-from src.storage.csv_storage import save_pair_events_to_csv
+from src.protocols.uniswap_v2.core.rpc import get_web3
+from src.protocols.uniswap_v2.indexers.pairs_indexer import index_pair_events
+from src.protocols.uniswap_v2.core.config import load_config
+from src.protocols.uniswap_v2.storage.csv_storage import save_pair_events_to_csv
 
 
 def run():
@@ -19,7 +19,7 @@ def run():
     w3 = get_web3(config['RPC_URL'])
     print("Successfully connected to RPC\n")
 
-    events = index_pair_events(w3, config, csv_path="data/uniswap_v2_pairs.csv")
+    events = index_pair_events(w3, config, csv_path="data/uniswap_v2/uniswap_v2_pairs.csv")
 
     if events:
         save_pair_events_to_csv(events, "uniswap_v2_pair_events.csv")
