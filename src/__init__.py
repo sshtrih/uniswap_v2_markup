@@ -1,0 +1,1 @@
+"""Main package for the multi-protocol blockchain indexer."""
