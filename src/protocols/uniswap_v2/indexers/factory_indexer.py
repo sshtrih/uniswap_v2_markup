@@ -74,25 +74,56 @@ def fetch_logs_in_batches(
     return all_logs
 
 
-def get_block_timestamp(w3: Web3, block_number: int, cache: dict) -> int:
+def get_block_timestamp(w3: Web3, block_number: int, cache: dict, last_request_time: list = None) -> int:
     """
-    Get timestamp for a block with caching.
+    Get timestamp for a block with caching and rate limiting.
     
     Args:
         w3: Connected Web3 instance
         block_number: Block number to get timestamp for
         cache: Dictionary to cache timestamps
+        last_request_time: List to track last request time for rate limiting
         
     Returns:
         int: Unix timestamp of the block
     """
     if block_number not in cache:
-        try:
-            block = w3.eth.get_block(block_number)
-            cache[block_number] = block['timestamp']
-        except Exception as e:
-            print(f"Error fetching block {block_number}: {e}")
-            cache[block_number] = 0
+        # Rate limiting: wait at least 0.1 seconds between requests
+        if last_request_time is not None:
+            elapsed = time.time() - last_request_time[0]
+            if elapsed < 0.1:
+                time.sleep(0.1 - elapsed)
+            last_request_time[0] = time.time()
+        
+        retry_count = 0
+        max_retries = 5
+        
+        while retry_count < max_retries:
+            try:
+                block = w3.eth.get_block(block_number)
+                cache[block_number] = block['timestamp']
+                break
+            except Exception as e:
+                error_str = str(e)
+                is_retryable = (
+                    '429' in error_str
+                    or 'Too Many Requests' in error_str
+                    or '-32603' in error_str
+                    or 'temporarily unavailable' in error_str
+                )
+                if is_retryable:
+                    retry_count += 1
+                    if retry_count >= max_retries:
+                        print(f"\nError fetching block {block_number}: {e}")
+                        cache[block_number] = 0
+                        break
+                    wait_time = 2 ** retry_count
+                    print(f"\nRetryable error for block {block_number}, waiting {wait_time}s before retry {retry_count}/{max_retries}")
+                    time.sleep(wait_time)
+                else:
+                    print(f"\nError fetching block {block_number}: {e}")
+                    cache[block_number] = 0
+                    break
     
     return cache[block_number]
 
@@ -130,6 +161,7 @@ def index_pairs(w3: Web3, config: dict) -> List[dict]:
     # Decode events
     pairs = []
     timestamp_cache = {}
+    last_request_time = [time.time()]  # Track last request time for rate limiting
     
     print("Decoding events and fetching timestamps...")
     with tqdm(total=len(logs), desc="Processing events", unit="event") as pbar:
@@ -138,8 +170,8 @@ def index_pairs(w3: Web3, config: dict) -> List[dict]:
                 # Decode the event
                 pair_data = decode_paircreated_event(log)
                 
-                # Add timestamp
-                timestamp = get_block_timestamp(w3, pair_data['block_number'], timestamp_cache)
+                # Add timestamp with rate limiting
+                timestamp = get_block_timestamp(w3, pair_data['block_number'], timestamp_cache, last_request_time)
                 pair_data['timestamp'] = timestamp
                 
                 pairs.append(pair_data)

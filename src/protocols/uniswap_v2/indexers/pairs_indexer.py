@@ -23,26 +23,50 @@ def _tx_hash_hex(tx_hash) -> str:
     return tx_hash
 
 
-def get_transaction_sender(w3: Web3, tx_hash: str, cache: dict) -> str:
+def get_transaction_sender(w3: Web3, tx_hash: str, cache: dict, last_request_time: list) -> str:
     """
-    Get transaction sender (from address) with caching.
+    Get transaction sender (from address) with caching, rate limiting, and retry.
 
     Args:
         w3: Connected Web3 instance
         tx_hash: Transaction hash (hex string)
         cache: Dictionary to cache transaction senders
+        last_request_time: Single-element list [float] tracking last RPC call time
 
     Returns:
         str: Checksummed address of transaction sender (empty string on error)
     """
-    if tx_hash not in cache:
+    if tx_hash in cache:
+        return cache[tx_hash]
+
+    max_retries = 5
+    min_delay = 0.15
+
+    for attempt in range(max_retries):
+        elapsed = time.time() - last_request_time[0]
+        if elapsed < min_delay:
+            time.sleep(min_delay - elapsed)
+
         try:
             tx = w3.eth.get_transaction(tx_hash)
+            last_request_time[0] = time.time()
             cache[tx_hash] = Web3.to_checksum_address(tx['from'])
+            return cache[tx_hash]
         except Exception as e:
-            print(f"Error fetching transaction {tx_hash}: {e}")
+            last_request_time[0] = time.time()
+            err = str(e)
+            if '429' in err or 'Too Many Requests' in err or '-32603' in err or 'temporarily unavailable' in err:
+                wait = 2 ** (attempt + 1)
+                print(f"\n  Rate limited on tx {tx_hash[:18]}..., retry {attempt+1}/{max_retries} in {wait}s")
+                time.sleep(wait)
+                continue
+            print(f"\nError fetching transaction {tx_hash}: {e}")
             cache[tx_hash] = ''
-    return cache[tx_hash]
+            return ''
+
+    print(f"\nFailed to fetch tx {tx_hash} after {max_retries} retries")
+    cache[tx_hash] = ''
+    return ''
 
 
 def load_pair_addresses(csv_path: str) -> List[str]:
@@ -75,6 +99,81 @@ def load_pair_addresses(csv_path: str) -> List[str]:
     return [Web3.to_checksum_address(addr) for addr in addresses]
 
 
+def _fetch_logs_with_retry(
+    w3: Web3,
+    pair_addresses: List[str],
+    topics: List[str],
+    batch_start: int,
+    batch_end: int,
+    max_retries: int = 3,
+) -> List[dict]:
+    """
+    Fetch logs for a specific block range with retry and automatic range splitting.
+    
+    Args:
+        w3: Connected Web3 instance
+        pair_addresses: List of pair addresses
+        topics: List of event topic signatures
+        batch_start: Start block
+        batch_end: End block
+        max_retries: Maximum retry attempts
+        
+    Returns:
+        List of log dictionaries
+    """
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            logs = w3.eth.get_logs({
+                'fromBlock': batch_start,
+                'toBlock': batch_end,
+                'address': pair_addresses,
+                'topics': [topics],
+            })
+            return logs
+        except Exception as e:
+            error_str = str(e)
+            error_dict = e.args[0] if e.args and isinstance(e.args[0], dict) else {}
+            
+            # Check for -32005 error: too many results
+            if '-32005' in error_str or (isinstance(error_dict, dict) and error_dict.get('code') == -32005):
+                # Extract suggested range from error
+                data = error_dict.get('data', {})
+                if isinstance(data, dict) and 'from' in data and 'to' in data:
+                    suggested_from = int(data['from'], 16) if isinstance(data['from'], str) else data['from']
+                    suggested_to = int(data['to'], 16) if isinstance(data['to'], str) else data['to']
+                    
+                    # Split the range in half and recursively fetch
+                    mid_block = (batch_start + batch_end) // 2
+                    print(f"\nToo many results for blocks {batch_start}-{batch_end}, splitting at block {mid_block}")
+                    
+                    logs1 = _fetch_logs_with_retry(w3, pair_addresses, topics, batch_start, mid_block, max_retries)
+                    logs2 = _fetch_logs_with_retry(w3, pair_addresses, topics, mid_block + 1, batch_end, max_retries)
+                    return logs1 + logs2
+                else:
+                    # If no suggested range, split in half
+                    mid_block = (batch_start + batch_end) // 2
+                    if mid_block == batch_start:
+                        # Can't split further, return empty
+                        print(f"\nCannot split range {batch_start}-{batch_end} further, skipping")
+                        return []
+                    print(f"\nToo many results for blocks {batch_start}-{batch_end}, splitting at block {mid_block}")
+                    logs1 = _fetch_logs_with_retry(w3, pair_addresses, topics, batch_start, mid_block, max_retries)
+                    logs2 = _fetch_logs_with_retry(w3, pair_addresses, topics, mid_block + 1, batch_end, max_retries)
+                    return logs1 + logs2
+            
+            # For other errors, retry with exponential backoff
+            retry_count += 1
+            if retry_count >= max_retries:
+                print(f"\nError fetching logs for blocks {batch_start}-{batch_end}: {e}")
+                return []
+            print(f"\nRetry {retry_count}/{max_retries} for blocks {batch_start}-{batch_end}")
+            time.sleep(2 ** retry_count)
+    
+    return []
+
+
 def fetch_pair_logs_in_batches(
     w3: Web3,
     pair_addresses: List[str],
@@ -86,7 +185,7 @@ def fetch_pair_logs_in_batches(
     Fetch Swap, Mint, and Burn logs for the given pair addresses in block batches.
 
     Uses eth_getLogs with filter by addresses and topic0 (Swap, Mint, Burn).
-    Retries failed batches with exponential backoff (up to 3 attempts).
+    Automatically handles -32005 errors (too many results) by splitting ranges.
     Shows progress via tqdm.
 
     Args:
@@ -117,29 +216,10 @@ def fetch_pair_logs_in_batches(
     with tqdm(total=num_batches, desc="Fetching Pair logs", unit="batch") as pbar:
         for batch_start in range(start_block, end_block + 1, batch_size):
             batch_end = min(batch_start + batch_size - 1, end_block)
-            retry_count = 0
-            max_retries = 3
-
-            while retry_count < max_retries:
-                try:
-                    logs = w3.eth.get_logs({
-                        'fromBlock': batch_start,
-                        'toBlock': batch_end,
-                        'address': pair_addresses,
-                        'topics': [topics],
-                    })
-                    all_logs.extend(logs)
-                    pbar.update(1)
-                    break
-                except Exception as e:
-                    retry_count += 1
-                    if retry_count >= max_retries:
-                        print(f"\nError fetching logs for blocks {batch_start}-{batch_end}: {e}")
-                        print("Max retries reached, skipping this batch")
-                        pbar.update(1)
-                        break
-                    print(f"\nRetry {retry_count}/{max_retries} for blocks {batch_start}-{batch_end}")
-                    time.sleep(2 ** retry_count)
+            
+            logs = _fetch_logs_with_retry(w3, pair_addresses, topics, batch_start, batch_end)
+            all_logs.extend(logs)
+            pbar.update(1)
 
     return all_logs
 
@@ -177,15 +257,15 @@ def index_pair_events(
         return []
 
     events = []
-    tx_sender_cache = {}  # Cache for transaction senders (one tx can have multiple events)
+    tx_sender_cache = {}
+    last_request_time = [0.0]
 
     print("Decoding events and fetching transaction senders...")
     for log in tqdm(logs, desc="Decoding events", unit="event"):
         try:
             event = decode_pair_event(log)
-            # Add transaction sender (tx_from) - the address that initiated the transaction
             tx_hash = _tx_hash_hex(log['transactionHash'])
-            tx_from = get_transaction_sender(w3, tx_hash, tx_sender_cache)
+            tx_from = get_transaction_sender(w3, tx_hash, tx_sender_cache, last_request_time)
             event['tx_from'] = tx_from
             events.append(event)
         except Exception as e:
